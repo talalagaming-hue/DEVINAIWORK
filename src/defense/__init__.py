@@ -8,4 +8,4 @@ defenses against adversarial attacks on language models.
 from .perplexity_filter import PerplexityFilter
 from .eval_harness import EvalHarness
 
-all = ["PerplexityFilter", "EvalHarness"]
+__all__ = ["PerplexityFilter", "EvalHarness"]
