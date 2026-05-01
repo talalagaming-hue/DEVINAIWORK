@@ -1,0 +1,37 @@
+Python
+pycache/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+Virtual environments
+venv/
+.venv/
+env/
+
+IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+Model files
+*.bin
+*.safetensors
+*.pt
+*.pth
+checkpoints/
+
+Test artifacts (generated fixtures kept in repo for traceability)
+tests/fixtures/ is intentionally tracked
+OS
+.DS_Store
+Thumbs.db
+
+Secrets
+.env
+.env.local
+secrets.yaml
