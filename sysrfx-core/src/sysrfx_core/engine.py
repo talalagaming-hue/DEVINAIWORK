@@ -13,11 +13,35 @@ and round-trippable.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Iterable, List, Tuple
 from xml.sax.saxutils import escape as _xml_escape
 
-__all__ = ["ChatRenderer", "Section"]
+__all__ = ["ChatRenderer", "Section", "sanitize_control_chars"]
+
+# C0 controls except TAB (0x09), LF (0x0A), CR (0x0D); plus DEL (0x7F).
+# Matches characters that XML 1.0 forbids inside element content and that
+# typical downstream consumers cannot handle safely.
+_CONTROL_CHAR_RE = re.compile(
+    "[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]"
+)
+
+
+def sanitize_control_chars(value: str) -> str:
+    """Replace forbidden control characters with their ``\\uXXXX`` escapes.
+
+    Tab, newline, and carriage return are preserved as-is. Every other C0
+    control character and DEL is replaced with its 6-character Python-style
+    Unicode escape (e.g. ``\\x00`` becomes the literal text ``\\u0000``), so
+    the original byte position is recoverable but the output is safe for XML
+    consumers and for visual inspection.
+    """
+
+    def _replace(match: "re.Match[str]") -> str:
+        return f"\\u{ord(match.group(0)):04x}"
+
+    return _CONTROL_CHAR_RE.sub(_replace, value)
 
 
 _TAG_CHAT = "ЧАТ"
@@ -94,11 +118,15 @@ class ChatRenderer:
         """Render all sections to a single newline-delimited string.
 
         Returns an empty string when no sections have been appended.
-        XML-significant characters in each section's content are escaped so
-        the rendered output is well-formed.
+        Section content is sanitized in two passes:
+
+        1. Forbidden C0 control characters and DEL are replaced with their
+           ``\\uXXXX`` escapes (tab/newline/CR are preserved verbatim).
+        2. XML-significant characters (``&``, ``<``, ``>``) are then entity-
+           escaped so the rendered document is well-formed.
         """
         return "\n".join(
-            f"<{section.tag}>{_xml_escape(section.content)}</{section.tag}>"
+            f"<{section.tag}>{_xml_escape(sanitize_control_chars(section.content))}</{section.tag}>"
             for section in self._sections
         )
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sysrfx_core.engine import ChatRenderer, Section
+from sysrfx_core.engine import ChatRenderer, Section, sanitize_control_chars
 
 
 def test_empty_render_returns_empty_string() -> None:
@@ -146,6 +146,53 @@ def test_extend_rejects_non_string_content() -> None:
     builder = ChatRenderer()
     with pytest.raises(TypeError):
         builder.extend([Section(tag="ЧАТ", content=42)])  # type: ignore[arg-type]
+
+
+def test_tab_newline_cr_are_preserved_by_sanitizer() -> None:
+    assert sanitize_control_chars("a\tb\nc\rd") == "a\tb\nc\rd"
+
+
+def test_nul_and_bel_are_escaped_by_sanitizer() -> None:
+    assert sanitize_control_chars("a\x00b\x07c") == "a\\u0000b\\u0007c"
+
+
+def test_del_is_escaped_by_sanitizer() -> None:
+    assert sanitize_control_chars("x\x7fy") == "x\\u007fy"
+
+
+def test_all_forbidden_c0_controls_are_escaped() -> None:
+    # 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F, 0x7F should all be replaced.
+    forbidden = (
+        [chr(i) for i in range(0x00, 0x09)]
+        + [chr(0x0B), chr(0x0C)]
+        + [chr(i) for i in range(0x0E, 0x20)]
+        + [chr(0x7F)]
+    )
+    payload = "".join(forbidden)
+    sanitized = sanitize_control_chars(payload)
+    # No raw control byte should survive.
+    for ch in forbidden:
+        assert ch not in sanitized
+    # Each one should appear as its escaped form.
+    for ch in forbidden:
+        assert f"\\u{ord(ch):04x}" in sanitized
+
+
+def test_render_escapes_control_chars_in_content() -> None:
+    rendered = ChatRenderer().tools("a\x00b\x01c").render()
+    assert rendered == "<ИНСТРУМЕНТЫ>a\\u0000b\\u0001c</ИНСТРУМЕНТЫ>"
+
+
+def test_render_preserves_tabs_and_newlines_inside_content() -> None:
+    rendered = ChatRenderer().code("def f():\n\treturn 1\r\n").render()
+    assert rendered == "<КОД>def f():\n\treturn 1\r\n</КОД>"
+
+
+def test_render_control_char_sanitization_runs_before_xml_escape() -> None:
+    # A raw '<' followed by a NUL should yield '&lt;' followed by '\u0000',
+    # and not double-escape the backslash from the sanitizer output.
+    rendered = ChatRenderer().chat("<\x00&").render()
+    assert rendered == "<ЧАТ>&lt;\\u0000&amp;</ЧАТ>"
 
 
 def test_complex_log_scenario_roundtrip() -> None:
