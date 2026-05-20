@@ -16,6 +16,9 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
 ]
 
+[project.scripts]
+sysrfx-snap = "sysrfx_core.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8",

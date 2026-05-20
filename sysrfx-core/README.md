@@ -44,6 +44,42 @@ Output:
 
 Literal `<`, `>`, `&` inside section content are escaped to `&lt;`, `&gt;`,
 `&amp;` so the rendered document is well-formed and round-trippable.
+Forbidden C0 control characters (`\x00`–`\x08`, `\x0B`, `\x0C`, `\x0E`–`\x1F`)
+and DEL (`\x7F`) are replaced with their `\uXXXX` escapes before XML
+escaping. Tab, newline, and CR are preserved verbatim.
+
+## Collector + CLI
+
+The `Collector` class drives a `ChatRenderer` from an **injected** command
+runner. The library ships no default execution behavior: importing the
+collector never spawns a subprocess. Callers either supply their own
+runner (e.g. a mock for tests) or opt into the bundled
+`subprocess_runner`.
+
+```python
+from sysrfx_core import Collector, subprocess_runner
+
+collector = Collector(runner=subprocess_runner)
+collector.add_message("erafox: snapshot start", section="chat")
+collector.add_command(["echo", "hello"], section="tools")
+print(collector.render())
+```
+
+The `sysrfx-snap` console script wires `subprocess_runner` into a
+`Collector` from the shell. It has no default commands — every command
+must be passed explicitly via `--cmd SECTION:COMMAND`:
+
+```bash
+sysrfx-snap \
+  --message chat:"erafox: review the snapshot" \
+  --cmd tools:"echo hello" \
+  --cmd code:"printf one-line"
+```
+
+`SECTION` must be one of `chat`, `monologue`, `code`, `tools`. `COMMAND`
+is parsed with `shlex.split` by default; pass `--shell` to run it
+through `/bin/sh -c` instead. The CLI exits with the worst non-zero
+return code observed across all commands.
 
 ## Development
 
