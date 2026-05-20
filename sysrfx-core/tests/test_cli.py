@@ -9,6 +9,7 @@ stdout.
 
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Sequence, Tuple
 
 import pytest
@@ -104,6 +105,36 @@ def test_cli_end_to_end_with_mock_runner(capsys: pytest.CaptureFixture) -> None:
         ("echo", "hello"),
         ("printf", "first\\nsecond\\n"),
     ]
+
+
+def test_cli_preserves_argument_order_across_flag_kinds(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """Interleaved --message and --cmd flags must render in CLI order."""
+    runner = CapturedRunner({
+        ("first",): CommandResult(argv=("first",), stdout="A", returncode=0),
+        ("second",): CommandResult(argv=("second",), stdout="B", returncode=0),
+    })
+    rc = main(
+        [
+            "--message", "chat:line 1",
+            "--cmd", "tools:first",
+            "--message", "monologue:between",
+            "--cmd", "code:second",
+            "--message", "chat:line 5",
+        ],
+        runner=runner,
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+
+    # Extract just the opening tag of each section in document order; the
+    # sequence must match the CLI argument order exactly.
+    opens = re.findall(r"<(ЧАТ|МОНОЛОГ|КОД|ИНСТРУМЕНТЫ)>", out)
+    assert opens == ["ЧАТ", "ИНСТРУМЕНТЫ", "МОНОЛОГ", "КОД", "ЧАТ"]
+
+    # Sanity check: the runner was still called only twice, in order.
+    assert runner.calls == [("first",), ("second",)]
 
 
 def test_cli_propagates_worst_returncode(capsys: pytest.CaptureFixture) -> None:
