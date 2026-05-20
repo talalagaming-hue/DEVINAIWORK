@@ -1,5 +1,7 @@
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 from src.sysrfx_core.collector import CommandSpec, SysrfxCollector, parse_args
 
@@ -41,6 +43,30 @@ class SysrfxCollectorTest(unittest.TestCase):
             parse_args(["--timeout", "-5"])
 
         self.assertEqual(parse_args(["--timeout", "1"]).timeout, 1)
+
+    def test_empty_specs_do_not_run_default_collection(self):
+        def runner(command, timeout_seconds):
+            del timeout_seconds
+            self.fail(f"unexpected command execution: {command}")
+
+        collector = SysrfxCollector(runner=runner)
+
+        self.assertEqual(collector.collect([]), [])
+
+    def test_empty_results_do_not_run_default_collection(self):
+        def runner(command, timeout_seconds):
+            del timeout_seconds
+            self.fail(f"unexpected command execution: {command}")
+
+        collector = SysrfxCollector(runner=runner)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = collector.write_snapshot(Path(tmpdir) / "empty-snap.txt", results=[])
+
+            text = output.read_text(encoding="utf-8")
+
+        self.assertIn("<ЧАТ>", text)
+        self.assertIn("sysrfx-snap готов", text)
+        self.assertNotIn("command=dpkg -l", text)
 
 
 if __name__ == "__main__":

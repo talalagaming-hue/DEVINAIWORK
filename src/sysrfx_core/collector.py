@@ -72,7 +72,8 @@ class SysrfxCollector:
         self.runner = runner or self._run_subprocess
 
     def collect(self, specs: Iterable[CommandSpec] | None = None) -> list[CommandResult]:
-        return [self._collect_one(spec) for spec in (specs or self.default_specs())]
+        command_specs = self.default_specs() if specs is None else specs
+        return [self._collect_one(spec) for spec in command_specs]
 
     def render_snapshot(self, results: Sequence[CommandResult]) -> str:
         sections: list[str] = [
@@ -101,7 +102,7 @@ class SysrfxCollector:
 
     def write_snapshot(self, output_path: Path, results: Sequence[CommandResult] | None = None) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        snapshot = self.render_snapshot(results or self.collect())
+        snapshot = self.render_snapshot(self.collect() if results is None else results)
         output_path.write_text(snapshot, encoding="utf-8")
         return output_path
 
