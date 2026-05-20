@@ -37,6 +37,10 @@ class MemoryAccessError(HexScannerError):
     """Raised when a Windows memory API call fails."""
 
 
+class TrustedProcessAccessDeniedError(HexScannerError):
+    """Raised when a process does not satisfy trusted-peer policy."""
+
+
 @dataclass(frozen=True)
 class Pattern:
     """Parsed byte signature with optional wildcards."""
@@ -59,6 +63,61 @@ class MemoryPatch:
 
     address: int
     bytes_written: int
+
+
+@dataclass(frozen=True)
+class TrustedPeer:
+    """Trusted peer metadata for IPC integrity checks."""
+
+    pid: int
+    process_name: str | None
+    same_user: bool
+    explicitly_trusted: bool
+    current_process: bool
+    memory_access_permitted: bool = False
+
+
+class TrustedProcessDiscovery:
+    """Discover trusted peers without granting cross-process memory access."""
+
+    def __init__(self, trusted_pids: Iterable[int] = ()):
+        self.trusted_pids = {int(pid) for pid in trusted_pids}
+
+    def inspect_pid(self, pid: int, process_name: str | None = None) -> TrustedPeer:
+        if pid <= 0:
+            raise ValueError("pid must be greater than 0")
+        same_user = self._same_user(pid)
+        explicitly_trusted = pid in self.trusted_pids
+        current_process = pid == os.getpid()
+        if not (same_user or explicitly_trusted or current_process):
+            raise TrustedProcessAccessDeniedError(f"pid is not a trusted sysrfx peer: {pid}")
+        return TrustedPeer(
+            pid=pid,
+            process_name=process_name,
+            same_user=same_user,
+            explicitly_trusted=explicitly_trusted,
+            current_process=current_process,
+            memory_access_permitted=False,
+        )
+
+    def is_trusted(self, pid: int) -> bool:
+        try:
+            self.inspect_pid(pid)
+        except TrustedProcessAccessDeniedError:
+            return False
+        return True
+
+    @staticmethod
+    def _same_user(pid: int) -> bool:
+        if pid == os.getpid():
+            return True
+        proc_path = Path("/proc") / str(pid)
+        if proc_path.exists() and hasattr(os, "getuid"):
+            try:
+                return proc_path.stat().st_uid == os.getuid()
+            except OSError:
+                return False
+        return False
 
 
 class PROCESSENTRY32(ctypes.Structure):
@@ -89,7 +148,12 @@ class MEMORY_BASIC_INFORMATION(ctypes.Structure):
 
 
 class MemoryAuditor:
-    """Audit byte patterns in the current process using Windows APIs."""
+    """Audit byte patterns in the current process using Windows APIs.
+
+    Trusted peer discovery is metadata-only. It supports IPC integrity checks
+    and allow-list validation, but it does not authorize external memory reads
+    or writes.
+    """
 
     PROCESS_QUERY_INFORMATION = 0x0400
     PROCESS_VM_OPERATION = 0x0008
@@ -102,11 +166,26 @@ class MemoryAuditor:
     PAGE_NOACCESS = 0x01
     READABLE_PAGE_FLAGS = {0x02, 0x04, 0x08, 0x20, 0x40, 0x80}
 
-    def __init__(self, current_process_only: bool = True, max_region_size: int = 8 * 1024 * 1024):
+    def __init__(
+        self,
+        current_process_only: bool = True,
+        max_region_size: int = 8 * 1024 * 1024,
+        trusted_pids: Iterable[int] = (),
+    ):
         if max_region_size <= 0:
             raise ValueError("max_region_size must be greater than 0")
         self.current_process_only = current_process_only
         self.max_region_size = max_region_size
+        self.trusted_discovery = TrustedProcessDiscovery(trusted_pids)
+
+    def discover_trusted_peer(self, pid: int, process_name: str | None = None) -> TrustedPeer:
+        """Validate PID trust for IPC self-attestation workflows."""
+        return self.trusted_discovery.inspect_pid(pid, process_name)
+
+    def discover_trusted_peer_by_name(self, process_name: str) -> TrustedPeer:
+        """Resolve a process name and validate it as a trusted IPC peer."""
+        pid = self.find_process_id_by_name(process_name)
+        return self.discover_trusted_peer(pid, self._normalize_process_name(process_name))
 
     def find_process_id_by_name(self, process_name: str) -> int:
         """Return the PID for a process name, preferring the current process."""
