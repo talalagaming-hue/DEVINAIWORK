@@ -35,6 +35,14 @@ class SysrfxEngineTest(unittest.TestCase):
         self.assertIn("Ден", output)
         self.assertIn("принял", output)
 
+    def test_reply_as_den_is_deterministic(self):
+        engine = SysrfxEngine()
+
+        first = engine.reply_as_den("проверь engine")
+        second = engine.reply_as_den("проверь engine")
+
+        self.assertEqual(first, second)
+
     def test_boot_does_not_double_wrap_status_actions(self):
         output = SysrfxEngine().boot()
 

@@ -102,9 +102,9 @@ class SysrfxEngine:
 
         return "\n\n".join(
             [
-                self.chat([ChatMessage(self.client_name, normalized, self._now())]),
+                self.chat([ChatMessage(self.client_name, normalized)]),
                 self.monologue(rationale),
-                self.chat([ChatMessage(self.contractor_name, response, self._now())]),
+                self.chat([ChatMessage(self.contractor_name, response)]),
             ]
         )
 

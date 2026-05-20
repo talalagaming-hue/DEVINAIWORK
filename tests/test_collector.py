@@ -1,7 +1,7 @@
 import subprocess
 import unittest
 
-from src.sysrfx_core.collector import CommandSpec, SysrfxCollector
+from src.sysrfx_core.collector import CommandSpec, SysrfxCollector, parse_args
 
 
 class SysrfxCollectorTest(unittest.TestCase):
@@ -32,6 +32,15 @@ class SysrfxCollectorTest(unittest.TestCase):
         self.assertNotIn("hunter2", redacted)
         self.assertNotIn("xyz", redacted)
         self.assertIn("[REDACTED]", redacted)
+
+    def test_parse_args_rejects_non_positive_timeout(self):
+        with self.assertRaises(SystemExit):
+            parse_args(["--timeout", "0"])
+
+        with self.assertRaises(SystemExit):
+            parse_args(["--timeout", "-5"])
+
+        self.assertEqual(parse_args(["--timeout", "1"]).timeout, 1)
 
 
 if __name__ == "__main__":

@@ -189,11 +189,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--timeout",
-        type=int,
+        type=_positive_int,
         default=120,
         help="Per-command timeout in seconds.",
     )
     return parser.parse_args(argv)
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than 0")
+    return parsed
 
 
 def main(argv: Sequence[str] | None = None) -> int:
