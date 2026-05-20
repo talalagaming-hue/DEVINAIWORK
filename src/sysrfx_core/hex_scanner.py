@@ -73,31 +73,49 @@ class TrustedPeer:
     process_name: str | None
     same_user: bool
     explicitly_trusted: bool
+    name_trusted: bool
     current_process: bool
     memory_access_permitted: bool = False
+
+
+@dataclass(frozen=True)
+class DebugSession:
+    """Safe diagnostic session metadata for a trusted peer."""
+
+    peer: TrustedPeer
+    attached: bool
+    live_memory_access: bool
+    reason: str
 
 
 class TrustedProcessDiscovery:
     """Discover trusted peers without granting cross-process memory access."""
 
-    def __init__(self, trusted_pids: Iterable[int] = ()):
+    DEFAULT_TRUSTED_NAMES = {"sysrfx-worker", "sysrfx-worker.exe", "notepad.exe"}
+
+    def __init__(self, trusted_pids: Iterable[int] = (), trusted_names: Iterable[str] | None = None):
         self.trusted_pids = {int(pid) for pid in trusted_pids}
+        names = self.DEFAULT_TRUSTED_NAMES if trusted_names is None else trusted_names
+        self.trusted_names = {name.strip().lower() for name in names if name.strip()}
 
     def inspect_pid(self, pid: int, process_name: str | None = None) -> TrustedPeer:
         if pid <= 0:
             raise ValueError("pid must be greater than 0")
         same_user = self._same_user(pid)
         explicitly_trusted = pid in self.trusted_pids
+        normalized_name = self._normalize_name(process_name)
+        name_trusted = normalized_name in self.trusted_names
         current_process = pid == os.getpid()
-        if not (same_user or explicitly_trusted or current_process):
+        if not (same_user or explicitly_trusted or name_trusted or current_process):
             raise TrustedProcessAccessDeniedError(f"pid is not a trusted sysrfx peer: {pid}")
         return TrustedPeer(
             pid=pid,
-            process_name=process_name,
+            process_name=normalized_name,
             same_user=same_user,
             explicitly_trusted=explicitly_trusted,
+            name_trusted=name_trusted,
             current_process=current_process,
-            memory_access_permitted=False,
+            memory_access_permitted=current_process,
         )
 
     def is_trusted(self, pid: int) -> bool:
@@ -118,6 +136,13 @@ class TrustedProcessDiscovery:
             except OSError:
                 return False
         return False
+
+    @staticmethod
+    def _normalize_name(process_name: str | None) -> str | None:
+        if process_name is None:
+            return None
+        normalized = process_name.strip().lower()
+        return normalized or None
 
 
 class PROCESSENTRY32(ctypes.Structure):
@@ -147,7 +172,7 @@ class MEMORY_BASIC_INFORMATION(ctypes.Structure):
     ]
 
 
-class MemoryAuditor:
+class DebugEngine:
     """Audit byte patterns in the current process using Windows APIs.
 
     Trusted peer discovery is metadata-only. It supports IPC integrity checks
@@ -171,12 +196,13 @@ class MemoryAuditor:
         current_process_only: bool = True,
         max_region_size: int = 8 * 1024 * 1024,
         trusted_pids: Iterable[int] = (),
+        trusted_names: Iterable[str] | None = None,
     ):
         if max_region_size <= 0:
             raise ValueError("max_region_size must be greater than 0")
         self.current_process_only = current_process_only
         self.max_region_size = max_region_size
-        self.trusted_discovery = TrustedProcessDiscovery(trusted_pids)
+        self.trusted_discovery = TrustedProcessDiscovery(trusted_pids, trusted_names)
 
     def discover_trusted_peer(self, pid: int, process_name: str | None = None) -> TrustedPeer:
         """Validate PID trust for IPC self-attestation workflows."""
@@ -186,6 +212,59 @@ class MemoryAuditor:
         """Resolve a process name and validate it as a trusted IPC peer."""
         pid = self.find_process_id_by_name(process_name)
         return self.discover_trusted_peer(pid, self._normalize_process_name(process_name))
+
+    def attach_to_process(self, pid: int, process_name: str | None = None) -> DebugSession:
+        """Create a safe diagnostic session for a trusted peer.
+
+        External peers are eligible for IPC self-attestation/crash-dump workflows
+        only. Live debugger attachment and cross-process memory access remain
+        disabled unless the target is the current process.
+        """
+        peer = self.discover_trusted_peer(pid, process_name)
+        if peer.current_process:
+            return DebugSession(
+                peer=peer,
+                attached=True,
+                live_memory_access=True,
+                reason="current process self-debug session",
+            )
+        return DebugSession(
+            peer=peer,
+            attached=False,
+            live_memory_access=False,
+            reason="trusted peer metadata accepted; live external debugging requires an offline dump or peer self-attestation",
+        )
+
+    def read_debug_memory(self, pid: int, address: int, size: int, process_name: str | None = None) -> bytes:
+        """Read memory for a current-process debug session only."""
+        if address <= 0:
+            raise ValueError("address must be greater than 0")
+        if size <= 0:
+            raise ValueError("size must be greater than 0")
+        session = self.attach_to_process(pid, process_name)
+        if not session.live_memory_access:
+            raise ExternalProcessDeniedError("external live debug memory reads are disabled; use offline dumps")
+        handle = self._open_process(pid, write=False)
+        try:
+            return self._read_process_memory(handle, address, size)
+        finally:
+            self._close_real_handle(handle)
+
+    def write_debug_memory(self, pid: int, address: int, data: bytes, process_name: str | None = None) -> MemoryPatch:
+        """Write memory for a current-process debug session only."""
+        if address <= 0:
+            raise ValueError("address must be greater than 0")
+        if not data:
+            raise ValueError("data must not be empty")
+        session = self.attach_to_process(pid, process_name)
+        if not session.live_memory_access:
+            raise ExternalProcessDeniedError("external live debug memory writes are disabled; use offline dumps")
+        handle = self._open_process(pid, write=True)
+        try:
+            written = self._write_process_memory(handle, address, data)
+        finally:
+            self._close_real_handle(handle)
+        return MemoryPatch(address=address, bytes_written=written)
 
     def find_process_id_by_name(self, process_name: str) -> int:
         """Return the PID for a process name, preferring the current process."""
@@ -336,7 +415,7 @@ class MemoryAuditor:
         buffer = ctypes.create_string_buffer(data)
         ok = kernel32.WriteProcessMemory(handle, ctypes.c_void_p(address), buffer, len(data), ctypes.byref(written))
         if not ok or written.value != len(data):
-            MemoryAuditor._raise_last_error("WriteProcessMemory")
+            DebugEngine._raise_last_error("WriteProcessMemory")
         return int(written.value)
 
     @staticmethod
@@ -353,6 +432,9 @@ class MemoryAuditor:
     def _raise_last_error(api_name: str) -> None:
         error_code = ctypes.get_last_error()
         raise MemoryAccessError(f"{api_name} failed with Windows error {error_code}")
+
+
+MemoryAuditor = DebugEngine
 
 
 def parse_signature(signature: bytes | str | Pattern) -> Pattern:

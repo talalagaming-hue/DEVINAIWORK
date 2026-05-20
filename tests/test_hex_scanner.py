@@ -2,6 +2,7 @@ import os
 import unittest
 
 from src.sysrfx_core.hex_scanner import (
+    DebugEngine,
     ExternalProcessDeniedError,
     MemoryAuditor,
     TrustedProcessAccessDeniedError,
@@ -41,13 +42,19 @@ class HexScannerTest(unittest.TestCase):
 
         self.assertTrue(peer.current_process)
         self.assertTrue(peer.same_user)
-        self.assertFalse(peer.memory_access_permitted)
+        self.assertTrue(peer.memory_access_permitted)
 
     def test_trusted_discovery_accepts_explicit_pid_without_memory_permission(self):
         peer = TrustedProcessDiscovery([999999]).inspect_pid(999999, "sysrfx-child.exe")
 
         self.assertTrue(peer.explicitly_trusted)
         self.assertFalse(peer.current_process)
+        self.assertFalse(peer.memory_access_permitted)
+
+    def test_trusted_discovery_accepts_default_debuggable_names(self):
+        peer = TrustedProcessDiscovery().inspect_pid(999998, "notepad.exe")
+
+        self.assertTrue(peer.name_trusted)
         self.assertFalse(peer.memory_access_permitted)
 
     def test_trusted_discovery_rejects_unknown_pid(self):
@@ -61,6 +68,22 @@ class HexScannerTest(unittest.TestCase):
 
         self.assertEqual(peer.pid, 999999)
         self.assertFalse(peer.memory_access_permitted)
+
+    def test_debug_engine_alias_and_attach_external_peer_metadata_only(self):
+        self.assertIs(MemoryAuditor, DebugEngine)
+        session = DebugEngine(trusted_pids=[999999]).attach_to_process(999999, "sysrfx-worker")
+
+        self.assertFalse(session.attached)
+        self.assertFalse(session.live_memory_access)
+
+    def test_debug_memory_wrappers_deny_external_trusted_peer(self):
+        engine = DebugEngine(trusted_pids=[999999])
+
+        with self.assertRaises(ExternalProcessDeniedError):
+            engine.read_debug_memory(999999, 0x1000, 4, "notepad.exe")
+
+        with self.assertRaises(ExternalProcessDeniedError):
+            engine.write_debug_memory(999999, 0x1000, b"\x90", "notepad.exe")
 
 
 if __name__ == "__main__":
