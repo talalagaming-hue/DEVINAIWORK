@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""CLI wrapper for the sysrfx native system snapshot collector."""
+
+from src.sysrfx_core.collector import main
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
