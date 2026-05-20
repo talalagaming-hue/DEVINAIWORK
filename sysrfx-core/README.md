@@ -81,6 +81,27 @@ is parsed with `shlex.split` by default; pass `--shell` to run it
 through `/bin/sh -c` instead. The CLI exits with the worst non-zero
 return code observed across all commands.
 
+## Safety considerations
+
+`sysrfx-core` is a string formatter. It escapes XML metacharacters
+(`&`, `<`, `>`) and forbidden C0 control bytes; it does not classify,
+redact, or filter section *contents* by meaning. If a downstream
+consumer (e.g. a RAG pipeline feeding an LLM) is expected to treat one
+section as more trustworthy than another, that is a policy the operator
+implements upstream of the renderer, not a guarantee the renderer makes.
+
+`Collector` defaults to `null_runner`, so importing the library and
+constructing a collector never executes anything. `subprocess_runner` is
+opt-in. The `sysrfx-snap` CLI ships with no default commands; every
+command is operator-supplied. None of this prevents an operator from
+using the CLI to capture sensitive output — that is an operator
+decision made above the library boundary.
+
+If you need policy enforcement (allowed sections, max content size,
+ASCII-only mode, redaction of named patterns), the right place is a
+thin policy module composed *on top of* `Collector`. The renderer should
+remain a pure transformation.
+
 ## Development
 
 ```bash
